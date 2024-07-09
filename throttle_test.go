@@ -26,7 +26,7 @@ import (
 func Test_Constant(t *testing.T) {
 	t.Parallel()
 
-	throttle := NewThrottle(10, 5) // 5 ops per 10 ms, or 500 per second
+	throttle := New(10, 5) // 5 ops per 10 ms, or 500 per second
 	allowed := 0
 	disallowed := 0
 	t0 := time.Now()
@@ -46,7 +46,7 @@ func Test_Constant(t *testing.T) {
 func Test_Weight(t *testing.T) {
 	t.Parallel()
 
-	throttle := NewThrottle(10, 5) // 5 ops per 10 ms, or 500 per second
+	throttle := New(10, 5) // 5 ops per 10 ms, or 500 per second
 	allowed := 0
 	disallowed := 0
 	t0 := time.Now()
@@ -69,7 +69,7 @@ func Test_RandomWeight(t *testing.T) {
 	r := rand.New(rand.NewSource(time.Now().UnixMilli()))
 
 	maxWeight := 20
-	throttle := NewThrottle(10, int32(maxWeight)) // 20 ops per 10 ms, or 2000 per second
+	throttle := New(10, int32(maxWeight)) // 20 ops per 10 ms, or 2000 per second
 	allowed := 0
 	disallowed := 0
 	t0 := time.Now()
@@ -90,7 +90,7 @@ func Test_RandomWeight(t *testing.T) {
 func Test_Intermittent(t *testing.T) {
 	t.Parallel()
 
-	throttle := NewThrottle(10, 5) // 5 ops per 10 ms, or 500 per second
+	throttle := New(10, 5) // 5 ops per 10 ms, or 500 per second
 	allowed := 0
 	disallowed := 0
 	t0 := time.Now()
@@ -114,7 +114,7 @@ func Test_Random(t *testing.T) {
 
 	r := rand.New(rand.NewSource(time.Now().UnixMilli()))
 
-	throttle := NewThrottle(10, 5) // 5 ops per 10 ms, or 500 per second
+	throttle := New(10, 5) // 5 ops per 10 ms, or 500 per second
 	allowed := 0
 	disallowed := 0
 	t0 := time.Now()
@@ -134,7 +134,7 @@ func Test_Random(t *testing.T) {
 }
 
 func Benchmark_Allow(b *testing.B) {
-	throttle := NewThrottle(60000, int32(b.N/2))
+	throttle := New(60000, int32(b.N/2))
 	for i := 0; i < b.N; i++ {
 		throttle.Allow()
 	}

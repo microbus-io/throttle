@@ -30,8 +30,8 @@ type Throttle struct {
 	last         atomic.Int64
 }
 
-// NewThrottle creates a new sliding window throttle, allowing no more than a limited number of operations to happen in a given time window.
-func NewThrottle(windowMillis int32, limit int32) *Throttle {
+// New creates a new sliding window throttle, allowing no more than a limited number of operations to happen in a given time window.
+func New(windowMillis int32, limit int32) *Throttle {
 	return &Throttle{
 		windowMillis: windowMillis,
 		limit:        limit,
@@ -48,7 +48,6 @@ func (t *Throttle) AllowN(wt int32) bool {
 	now := time.Now().UnixMilli()
 	div := float64(now) / float64(2*t.windowMillis)
 	divX2 := int64(div * 2)
-
 	diff := int32(float64(now) - math.Floor(div)*float64(2*t.windowMillis))
 	current := int8(diff / t.windowMillis)
 
