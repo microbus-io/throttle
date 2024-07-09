@@ -1,16 +1,12 @@
 # Throttle
 
 `Throttle` is a rate limiter that implements the sliding window algorithm.
-
-Status: __WORK IN PROGRESS__
-
-`Throttle` was designed with both memory efficiency and performance in mind.
-It avoids locking by using `atomic` integers and takes just about 32 bytes of memory.
-A call to `Allow` completes in approximately 50 nanoseconds.
+It uses two counters, one for the current fixed window and one for the previous fixed window, to estimate the load of operations in the sliding window.
+It is therefore not 100% accurate but it uses very little memory (under 64 bytes).  
 
 ```go
 // Create a new throttle allowing 20 ops/second
-th := throttle.New(1000, 20)
+th := throttle.New(time.Second, 20)
 
 // Check if op is allowed
 if th.Allow() {
