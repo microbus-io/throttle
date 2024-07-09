@@ -25,3 +25,5 @@ There are four common algorithms for rate limiting, each with its own pros and c
 There is a standard library implementation of the [token bucket algorithm](https://pkg.go.dev/golang.org/x/time/rate).
 
 `Throttle` is licensed by Microbus LLC under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+
+Inspired by ["Rate Limiter — Sliding Window Counter"](https://medium.com/@avocadi/rate-limiter-sliding-window-counter-7ec08dbe21d6).
