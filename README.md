@@ -6,6 +6,16 @@
 It avoids locking by using `atomic` integers and takes just about 32 bytes of memory.
 A call to `Allow` completes in approximately 50 nanoseconds.
 
+```go
+// Create a new throttle allowing 20 ops/second
+th := throttle.New(1000, 20)
+
+// Check if op is allowed
+if th.Allow() {
+    ...
+}
+```
+
 Rate limiting is a technique that controls the rate of requests sent or received by a network, server, or other resource.
 There are four common algorithms for rate limiting, each with its own pros and cons:
 
