@@ -2,6 +2,8 @@
 
 `Throttle` is a rate limiter that implements the sliding window algorithm.
 
+Status: __WORK IN PROGRESS__
+
 `Throttle` was designed with both memory efficiency and performance in mind.
 It avoids locking by using `atomic` integers and takes just about 32 bytes of memory.
 A call to `Allow` completes in approximately 50 nanoseconds.
