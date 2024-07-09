@@ -72,9 +72,9 @@ func (t *Throttle) AllowN(wt int) bool {
 	defer t.mux.Unlock()
 
 	// Reset counter(s) if the last call happened in a previous period
-	if periodIndexInt > int64(t.last) {
+	if periodIndexInt > t.last {
 		t.counter[currentCounter] = 0
-		if periodIndexInt > int64(t.last+1) {
+		if periodIndexInt > t.last+1 {
 			t.counter[previousCounter] = 0
 		}
 		t.last = periodIndexInt
