@@ -247,4 +247,5 @@ func Benchmark_AllowConcurrent(b *testing.B) {
 		}()
 	}
 	wg.Wait()
+	// Benchmark suggests a 3X negative performance impact due to mutex contention
 }

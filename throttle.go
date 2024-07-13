@@ -23,14 +23,14 @@ import (
 
 // Throttle implements the sliding window algorithm for rate limiting.
 type Throttle struct {
-	mux          sync.Mutex
-	windowMillis int
-	limit        int
-	counter      [2]int
-	last         int64
+	mux             sync.Mutex
+	windowMillis    int
+	limit           int
+	counter         [2]int
+	lastPeriodIndex int64
 }
 
-// New creates a new sliding window throttle, allowing no more than a limited number of operations to happen in a given sliding time window.
+// New creates a throttle that allows no more than a limited number of operations to occur in a sliding time window.
 // The smallest granularity for the time window is 1 millisecond.
 func New(window time.Duration, limit int) *Throttle {
 	return &Throttle{
@@ -61,30 +61,30 @@ func (t *Throttle) AllowN(wt int) bool {
 	}
 	previousCounter := 1 - currentCounter
 
-	// Prorate the previous counter based on how much of the current period has elapsed
-	// For example, if 20% of the current period elapsed, take 80% of the previous counter
+	// Prorate the counter of the previous period based on how much of the current period has elapsed
+	// For example, if 20% of the current period elapsed, take 80% of the counter of the previous period
 	// |---------|---------|---------|---------|
-	//   |         ^
+	//   >         <
 	// start      now
-	proration := 1.0 - (periodIndex - float64(periodIndexInt))
+	proration := 1.0 - (periodIndex - float64(periodIndexInt)) // e.g. 0.8
 
 	t.mux.Lock()
 	defer t.mux.Unlock()
 
 	// Reset counter(s) if the last call happened in a previous period
-	if periodIndexInt > t.last {
+	if periodIndexInt > t.lastPeriodIndex {
 		t.counter[currentCounter] = 0
-		if periodIndexInt > t.last+1 {
+		if periodIndexInt > t.lastPeriodIndex+1 {
 			t.counter[previousCounter] = 0
 		}
-		t.last = periodIndexInt
+		t.lastPeriodIndex = periodIndexInt
 	}
 
-	// The load is estimated to be the counter of the current period, plus the proration of the previous period
+	// The sliding window load is estimated to be the counter of the current period, plus the proration of the counter of the previous period
 	estimatedLoad := t.counter[currentCounter] + int(float64(t.counter[previousCounter])*proration)
 
 	// Check against limit
-	if estimatedLoad+wt > t.limit {
+	if estimatedLoad > t.limit-wt {
 		return false
 	}
 	// Increment current counter if op is allowed

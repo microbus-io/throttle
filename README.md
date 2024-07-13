@@ -1,7 +1,7 @@
 # Throttle
 
 `Throttle` is a rate limiter that implements the sliding window algorithm.
-It uses two counters, one for the current fixed window and one for the previous fixed window, to estimate the load of operations in the sliding window.
+It uses two counters - one for the current fixed window and one for the previous fixed window - to estimate the load of operations in the sliding window.
 It is therefore not 100% accurate but it uses very little memory (under 64 bytes).  
 
 ```go
