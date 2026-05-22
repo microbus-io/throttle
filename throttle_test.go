@@ -34,7 +34,8 @@ func Test_Constant(t *testing.T) {
 	disallowed := 0
 	t0 := time.Now()
 	for time.Since(t0) < time.Second {
-		if throttle.Allow() {
+		admit, _ := throttle.Allow()
+		if admit {
 			allowed++
 		} else {
 			disallowed++
@@ -59,7 +60,8 @@ func Test_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for time.Since(t0) < time.Second {
-				if throttle.Allow() {
+				admit, _ := throttle.Allow()
+				if admit {
 					allowed.Add(1)
 				} else {
 					disallowed.Add(1)
@@ -87,7 +89,8 @@ func Test_Overflow(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for time.Since(t0) < time.Second {
-				if throttle.AllowN(300) {
+				admit, _ := throttle.AllowN(300)
+				if admit {
 					allowed.Add(1)
 				} else {
 					disallowed.Add(1)
@@ -110,7 +113,8 @@ func Test_Weight(t *testing.T) {
 	disallowed := 0
 	t0 := time.Now()
 	for time.Since(t0) < time.Second {
-		if throttle.AllowN(5) { // Weight=5
+		admit, _ := throttle.AllowN(5) // Weight=5
+		if admit {
 			allowed += 5
 		} else {
 			disallowed += 5
@@ -134,7 +138,8 @@ func Test_RandomWeight(t *testing.T) {
 	t0 := time.Now()
 	for time.Since(t0) < time.Second {
 		wt := r.Intn(maxWeight) + 1
-		if throttle.AllowN(wt) {
+		admit, _ := throttle.AllowN(wt)
+		if admit {
 			allowed += wt
 		} else {
 			disallowed += wt
@@ -155,7 +160,8 @@ func Test_Intermittent(t *testing.T) {
 	t0 := time.Now()
 	for time.Since(t0) < time.Second {
 		if time.Since(t0).Milliseconds()/100%2 == 0 {
-			if throttle.AllowN(1) {
+			admit, _ := throttle.AllowN(1)
+			if admit {
 				allowed++
 			} else {
 				disallowed++
@@ -179,7 +185,8 @@ func Test_Random(t *testing.T) {
 	t0 := time.Now()
 	for time.Since(t0) < time.Second {
 		if r.Intn(5) == 0 {
-			if throttle.AllowN(1) {
+			admit, _ := throttle.AllowN(1)
+			if admit {
 				allowed++
 			} else {
 				disallowed++
@@ -227,10 +234,99 @@ func Test_Rotation(t *testing.T) {
 	}
 }
 
+func Test_Peek(t *testing.T) {
+	t.Parallel()
+
+	throttle := New(time.Second, 3)
+	// Empty throttle: peek admits, observed is 0.
+	admit, observed := throttle.Peek()
+	if !admit || observed != 0 {
+		t.Errorf("empty peek: admit=%v observed=%d", admit, observed)
+	}
+	// Allow on an empty throttle: admits with pre-commit observed of 0.
+	admit, observed = throttle.Allow()
+	if !admit || observed != 0 {
+		t.Errorf("first Allow: admit=%v observed=%d", admit, observed)
+	}
+	// Peek after 1 commit: observed reflects the prior op.
+	admit, observed = throttle.Peek()
+	if !admit || observed != 1 {
+		t.Errorf("peek after 1: admit=%v observed=%d", admit, observed)
+	}
+	// Peek does not consume - repeated peeks give the same answer.
+	admit, observed = throttle.Peek()
+	if !admit || observed != 1 {
+		t.Errorf("repeat peek: admit=%v observed=%d", admit, observed)
+	}
+	// Commit 2 more ops, filling to the limit. Pre-commit observed grows 1,2.
+	for i, want := range []int{1, 2} {
+		admit, observed = throttle.Allow()
+		if !admit || observed != want {
+			t.Errorf("Allow %d: admit=%v observed=%d want=%d", i, admit, observed, want)
+		}
+	}
+	// At the limit: peek refuses, observed equals the limit.
+	admit, observed = throttle.Peek()
+	if admit || observed != 3 {
+		t.Errorf("full peek: admit=%v observed=%d", admit, observed)
+	}
+	// Allow refuses too, observed unchanged (no increment on rejection).
+	admit, observed = throttle.Allow()
+	if admit || observed != 3 {
+		t.Errorf("full Allow: admit=%v observed=%d", admit, observed)
+	}
+}
+
+func Test_SetLimit(t *testing.T) {
+	t.Parallel()
+
+	throttle := New(time.Second, 5)
+	if throttle.Limit() != 5 {
+		t.Errorf("initial limit: got %d", throttle.Limit())
+	}
+	// Fill to the limit.
+	for i := 0; i < 5; i++ {
+		throttle.Allow()
+	}
+	admit, observed := throttle.Peek()
+	if admit || observed != 5 {
+		t.Errorf("at limit: admit=%v observed=%d", admit, observed)
+	}
+	// Raise the limit; counters preserved, room reopens.
+	throttle.SetLimit(10)
+	if throttle.Limit() != 10 {
+		t.Errorf("after SetLimit: got %d", throttle.Limit())
+	}
+	admit, observed = throttle.Peek()
+	if !admit || observed != 5 {
+		t.Errorf("after raise: admit=%v observed=%d", admit, observed)
+	}
+	// Lower the limit below the current observed load; further admissions refused.
+	throttle.SetLimit(3)
+	admit, observed = throttle.Peek()
+	if admit || observed != 5 {
+		t.Errorf("after lower: admit=%v observed=%d", admit, observed)
+	}
+}
+
 func Benchmark_Allow(b *testing.B) {
 	throttle := New(time.Minute, b.N/2)
 	for i := 0; i < b.N; i++ {
 		throttle.Allow()
+	}
+}
+
+func Benchmark_AllowN(b *testing.B) {
+	throttle := New(time.Minute, b.N*5)
+	for i := 0; i < b.N; i++ {
+		throttle.AllowN(5)
+	}
+}
+
+func Benchmark_Peek(b *testing.B) {
+	throttle := New(time.Minute, b.N)
+	for i := 0; i < b.N; i++ {
+		throttle.Peek()
 	}
 }
 

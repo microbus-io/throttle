@@ -9,10 +9,23 @@ It uses very little memory (under 64 bytes) but is not 100% accurate. Data sugge
 th := throttle.New(time.Second, 20)
 
 // Check if op is allowed
-if th.Allow() {
+admit, observed := th.Allow()
+if admit {
     ...
 }
+
+// Check without consuming a slot
+if admit, _ := th.Peek(); admit {
+    ...
+}
+
+// Adjust the limit at runtime; counters are preserved
+th.SetLimit(50)
 ```
+
+`Allow` and `AllowN` return the admission decision along with the sliding window's observed load *measured before the call* - useful for anchoring a downstream rejection (e.g. a 429) to the actual emitted rate. Add the weight to `observed` if you want the post-call load.
+`Peek` and `PeekN` answer the same question without modifying state.
+`SetLimit` and `Limit` get and set the limit at runtime without resetting the window.
 
 Rate limiting is a technique that controls the rate of requests sent or received by a network, server, or other resource.
 There are a few common algorithms for rate limiting, each with its own pros and cons:

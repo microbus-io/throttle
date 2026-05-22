@@ -39,13 +39,49 @@ func New(window time.Duration, limit int) *Throttle {
 	}
 }
 
-// Allow returns whether or not the operation is allowed. If it is, the internal count of operations is incremented.
-func (t *Throttle) Allow() bool {
+// SetLimit updates the throttle's limit. Counters are preserved, so the new
+// limit takes effect against the existing sliding-window history rather than
+// resetting it.
+func (t *Throttle) SetLimit(limit int) {
+	t.mux.Lock()
+	t.limit = limit
+	t.mux.Unlock()
+}
+
+// Limit returns the throttle's current limit.
+func (t *Throttle) Limit() int {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	return t.limit
+}
+
+// Allow returns whether the operation is allowed and the sliding window's
+// observed load measured before the call. On admit, the count is then
+// incremented by 1; on refusal, the count is unchanged. The returned observed
+// never includes the current op - add the weight if you want the post-call
+// load.
+func (t *Throttle) Allow() (admit bool, observed int) {
 	return t.AllowN(1)
 }
 
-// AllowN returns whether or not the operation is allowed, given a weight.
-func (t *Throttle) AllowN(wt int) bool {
+// AllowN is Allow with an explicit weight.
+func (t *Throttle) AllowN(wt int) (admit bool, observed int) {
+	return t.check(wt, true)
+}
+
+// Peek reports whether Allow would currently admit, along with the sliding
+// window's observed load, without modifying state. The result is advisory:
+// a concurrent caller may change the outcome of a follow-up Allow.
+func (t *Throttle) Peek() (admit bool, observed int) {
+	return t.PeekN(1)
+}
+
+// PeekN is Peek with an explicit weight.
+func (t *Throttle) PeekN(wt int) (admit bool, observed int) {
+	return t.check(wt, false)
+}
+
+func (t *Throttle) check(wt int, commit bool) (admit bool, observed int) {
 	// Divide the timeline into fixed windows. Identify where now falls
 	// |---------|---------|---------|---------|
 	//             ^
@@ -85,9 +121,10 @@ func (t *Throttle) AllowN(wt int) bool {
 
 	// Check against limit
 	if estimatedLoad > t.limit-wt {
-		return false
+		return false, estimatedLoad
 	}
-	// Increment current counter if op is allowed
-	t.counter[currentCounter] += wt
-	return true
+	if commit {
+		t.counter[currentCounter] += wt
+	}
+	return true, estimatedLoad
 }
