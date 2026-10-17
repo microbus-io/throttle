@@ -24,18 +24,20 @@ import (
 // Throttle implements the sliding window algorithm for rate limiting.
 type Throttle struct {
 	mux             sync.Mutex
-	windowMillis    int
+	window          time.Duration
 	limit           int
 	counter         [2]int
 	lastPeriodIndex int64
+	start           time.Time
 }
 
 // New creates a throttle that allows no more than a limited number of operations to occur in a sliding time window.
-// The smallest granularity for the time window is 1 millisecond.
+// A window of zero or less is taken as 1 nanosecond.
 func New(window time.Duration, limit int) *Throttle {
 	return &Throttle{
-		windowMillis: int(window.Milliseconds()),
-		limit:        limit,
+		window: max(window, 1),
+		limit:  limit,
+		start:  time.Now(),
 	}
 }
 
@@ -64,7 +66,7 @@ func (t *Throttle) Allow() (admit bool, observed int) {
 	return t.AllowN(1)
 }
 
-// AllowN is Allow with an explicit weight.
+// AllowN is Allow with an explicit weight. A negative weight is refused.
 func (t *Throttle) AllowN(wt int) (admit bool, observed int) {
 	return t.check(wt, true)
 }
@@ -76,19 +78,25 @@ func (t *Throttle) Peek() (admit bool, observed int) {
 	return t.PeekN(1)
 }
 
-// PeekN is Peek with an explicit weight.
+// PeekN is Peek with an explicit weight. A negative weight is refused.
 func (t *Throttle) PeekN(wt int) (admit bool, observed int) {
 	return t.check(wt, false)
 }
 
 func (t *Throttle) check(wt int, commit bool) (admit bool, observed int) {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	// Read the clock under the lock, so calls see time in the order they update the counters.
+	return t.checkAt(time.Since(t.start), wt, commit)
+}
+
+// checkAt is check at elapsed time since start. The caller holds the lock.
+func (t *Throttle) checkAt(elapsed time.Duration, wt int, commit bool) (admit bool, observed int) {
 	// Divide the timeline into fixed windows. Identify where now falls
 	// |---------|---------|---------|---------|
 	//             ^
 	//            now
-	now := time.Now().UnixMilli()
-	periodIndex := float64(now) / float64(t.windowMillis) // e.g. 12345.2
-	periodIndexInt := int64(periodIndex)                  // e.g. 12345
+	periodIndexInt := int64(elapsed / t.window) // e.g. 12345
 
 	// counter[0] is for even periods, counter[1] is for odd periods
 	currentCounter := 0
@@ -102,10 +110,7 @@ func (t *Throttle) check(wt int, commit bool) (admit bool, observed int) {
 	// |---------|---------|---------|---------|
 	//   >         <
 	// start      now
-	proration := 1.0 - (periodIndex - float64(periodIndexInt)) // e.g. 0.8
-
-	t.mux.Lock()
-	defer t.mux.Unlock()
+	proration := 1.0 - float64(elapsed%t.window)/float64(t.window) // e.g. 0.8
 
 	// Reset counter(s) if the last call happened in a previous period
 	if periodIndexInt > t.lastPeriodIndex {
@@ -119,8 +124,8 @@ func (t *Throttle) check(wt int, commit bool) (admit bool, observed int) {
 	// The sliding window load is estimated to be the counter of the current period, plus the proration of the counter of the previous period
 	estimatedLoad := t.counter[currentCounter] + int(float64(t.counter[previousCounter])*proration)
 
-	// Check against limit
-	if estimatedLoad > t.limit-wt {
+	// Check against limit. A negative weight would lower the counter and admit ops past the limit.
+	if wt < 0 || estimatedLoad > t.limit-wt {
 		return false, estimatedLoad
 	}
 	if commit {

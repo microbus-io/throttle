@@ -2,7 +2,7 @@
 
 `Throttle` is a rate limiter that implements the sliding window counter algorithm.
 It uses two counters - one for the current fixed window and one for the previous fixed window - to estimate the load of operations in the sliding window.
-It uses very little memory (under 64 bytes) but is not 100% accurate. Data suggests 0.003% of requests may be incorrectly categorized.
+It uses very little memory (under 80 bytes) but is not 100% accurate. Data suggests 0.003% of requests may be incorrectly categorized.
 
 ```go
 // Create a new throttle allowing 20 ops/second

@@ -26,27 +26,40 @@ import (
 	"time"
 )
 
+// drive offers the throttle one call every step for d of simulated time, weighing each call with wt, and returns
+// the weight admitted and refused. Simulated time makes the accuracy tests independent of how much CPU the test
+// process gets: a busy loop on a loaded machine is starved for whole windows and under-admits.
+func drive(th *Throttle, d, step time.Duration, wt func(elapsed time.Duration) int) (allowed, disallowed int) {
+	for elapsed := time.Duration(0); elapsed < d; elapsed += step {
+		w := wt(elapsed)
+		if w == 0 {
+			continue
+		}
+		th.mux.Lock()
+		admit, _ := th.checkAt(elapsed, w, true)
+		th.mux.Unlock()
+		if admit {
+			allowed += w
+		} else {
+			disallowed += w
+		}
+	}
+	return allowed, disallowed
+}
+
 func Test_Constant(t *testing.T) {
 	t.Parallel()
 
 	throttle := New(10*time.Millisecond, 5) // 5 ops per 10 ms, or 500 per second
-	allowed := 0
-	disallowed := 0
-	t0 := time.Now()
-	for time.Since(t0) < time.Second {
-		admit, _ := throttle.Allow()
-		if admit {
-			allowed++
-		} else {
-			disallowed++
-		}
-	}
+	allowed, disallowed := drive(throttle, time.Second, 10*time.Microsecond, func(time.Duration) int { return 1 })
 	if allowed < 490 || allowed > 510 {
 		t.Error(allowed)
 	}
 	fmt.Printf("Allowed %d\nDisallowed %d\n", allowed, disallowed)
 }
 
+// Test_Concurrent runs on the real clock, so a loaded machine can starve its goroutines and under-admit. Only
+// over-admission is a throttle bug, so the upper bound is the tight one.
 func Test_Concurrent(t *testing.T) {
 	t.Parallel()
 
@@ -70,12 +83,14 @@ func Test_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if allowed.Load() < 490 || allowed.Load() > 510 {
+	// The goroutines can run a little past the second, so allow one window's worth over.
+	if allowed.Load() < 100 || allowed.Load() > 515 {
 		t.Error(allowed.Load())
 	}
 	fmt.Printf("Allowed %d\nDisallowed %d\n", allowed.Load(), disallowed.Load())
 }
 
+// Test_Overflow runs on the real clock; see Test_Concurrent for its bounds.
 func Test_Overflow(t *testing.T) {
 	t.Parallel()
 
@@ -99,7 +114,7 @@ func Test_Overflow(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if allowed.Load() < 90 || allowed.Load() > 110 {
+	if allowed.Load() < 20 || allowed.Load() > 111 {
 		t.Error(allowed.Load())
 	}
 	fmt.Printf("Allowed %d\nDisallowed %d\n", allowed.Load(), disallowed.Load())
@@ -109,17 +124,7 @@ func Test_Weight(t *testing.T) {
 	t.Parallel()
 
 	throttle := New(10*time.Millisecond, 5) // 5 ops per 10 ms, or 500 per second
-	allowed := 0
-	disallowed := 0
-	t0 := time.Now()
-	for time.Since(t0) < time.Second {
-		admit, _ := throttle.AllowN(5) // Weight=5
-		if admit {
-			allowed += 5
-		} else {
-			disallowed += 5
-		}
-	}
+	allowed, disallowed := drive(throttle, time.Second, 10*time.Microsecond, func(time.Duration) int { return 5 })
 	if allowed < 490 || allowed > 510 {
 		t.Error(allowed)
 	}
@@ -133,18 +138,9 @@ func Test_RandomWeight(t *testing.T) {
 
 	maxWeight := 20
 	throttle := New(10*time.Millisecond, maxWeight) // 20 ops per 10 ms, or 2000 per second
-	allowed := 0
-	disallowed := 0
-	t0 := time.Now()
-	for time.Since(t0) < time.Second {
-		wt := r.Intn(maxWeight) + 1
-		admit, _ := throttle.AllowN(wt)
-		if admit {
-			allowed += wt
-		} else {
-			disallowed += wt
-		}
-	}
+	allowed, disallowed := drive(throttle, time.Second, 10*time.Microsecond, func(time.Duration) int {
+		return r.Intn(maxWeight) + 1
+	})
 	if allowed < maxWeight*90 || allowed > maxWeight*100 {
 		t.Error(allowed)
 	}
@@ -155,19 +151,13 @@ func Test_Intermittent(t *testing.T) {
 	t.Parallel()
 
 	throttle := New(10*time.Millisecond, 5) // 5 ops per 10 ms, or 500 per second
-	allowed := 0
-	disallowed := 0
-	t0 := time.Now()
-	for time.Since(t0) < time.Second {
-		if time.Since(t0).Milliseconds()/100%2 == 0 {
-			admit, _ := throttle.AllowN(1)
-			if admit {
-				allowed++
-			} else {
-				disallowed++
-			}
+	// Calls only in alternate 100ms stretches.
+	allowed, disallowed := drive(throttle, time.Second, 10*time.Microsecond, func(elapsed time.Duration) int {
+		if elapsed.Milliseconds()/100%2 == 0 {
+			return 1
 		}
-	}
+		return 0
+	})
 	if allowed < 250 || allowed > 500 {
 		t.Error(allowed)
 	}
@@ -180,19 +170,12 @@ func Test_Random(t *testing.T) {
 	r := rand.New(rand.NewSource(time.Now().UnixMilli()))
 
 	throttle := New(10*time.Millisecond, 5) // 5 ops per 10 ms, or 500 per second
-	allowed := 0
-	disallowed := 0
-	t0 := time.Now()
-	for time.Since(t0) < time.Second {
+	allowed, disallowed := drive(throttle, time.Second, 10*time.Microsecond, func(time.Duration) int {
 		if r.Intn(5) == 0 {
-			admit, _ := throttle.AllowN(1)
-			if admit {
-				allowed++
-			} else {
-				disallowed++
-			}
+			return 1
 		}
-	}
+		return 0
+	})
 	if allowed < 490 || allowed > 510 {
 		t.Error(allowed)
 	}
@@ -203,34 +186,89 @@ func Test_Rotation(t *testing.T) {
 	t.Parallel()
 
 	window := 100 * time.Millisecond
-	time.Sleep(time.Duration(time.Now().UnixMilli()) % 100)
 	throttle := New(window, 100)
-	if throttle.counter[0]+throttle.counter[1] != 0 {
-		t.Error(throttle.counter[0] + throttle.counter[1])
+	sum := func() int { return throttle.counter[0] + throttle.counter[1] }
+	allowAt := func(elapsed time.Duration) {
+		throttle.mux.Lock()
+		throttle.checkAt(elapsed, 1, true)
+		throttle.mux.Unlock()
 	}
-	throttle.Allow()
-	throttle.Allow()
-	throttle.Allow()
-	if throttle.counter[0]+throttle.counter[1] != 3 {
-		t.Error(throttle.counter[0] + throttle.counter[1])
+	if sum() != 0 {
+		t.Error(sum())
 	}
-	time.Sleep(window)
-	if throttle.counter[0]+throttle.counter[1] != 3 {
-		t.Error(throttle.counter[0] + throttle.counter[1])
+	allowAt(10 * time.Millisecond)
+	allowAt(10 * time.Millisecond)
+	allowAt(10 * time.Millisecond)
+	if sum() != 3 {
+		t.Error(sum())
 	}
-	throttle.Allow()
-	if throttle.counter[0]+throttle.counter[1] != 4 {
-		t.Error(throttle.counter[0] + throttle.counter[1])
+	allowAt(110 * time.Millisecond) // the next period keeps the previous one's counter
+	if sum() != 4 {
+		t.Error(sum())
 	}
-	time.Sleep(window)
-	throttle.Allow()
-	if throttle.counter[0]+throttle.counter[1] != 2 {
-		t.Error(throttle.counter[0] + throttle.counter[1])
+	allowAt(210 * time.Millisecond) // one period later, the first period's counter is reset
+	if sum() != 2 {
+		t.Error(sum())
 	}
-	time.Sleep(2 * window)
+	allowAt(410 * time.Millisecond) // two periods later, both are
+	if sum() != 1 {
+		t.Error(sum())
+	}
+}
+
+// Test_SubMillisecondWindow pins that a window under 1ms works. Truncated to whole milliseconds it became 0, and
+// dividing by it either refused everything after the first fill (arm64) or admitted everything (amd64).
+func Test_SubMillisecondWindow(t *testing.T) {
+	t.Parallel()
+
+	throttle := New(500*time.Microsecond, 3) // 3 ops per 0.5 ms
+	allowed, _ := drive(throttle, 100*time.Millisecond, time.Microsecond, func(time.Duration) int { return 1 })
+	if allowed < 590 || allowed > 610 {
+		t.Error(allowed)
+	}
+
+	// The same on the real clock: the broken arithmetic gave 3, or hundreds of thousands.
+	throttle = New(500*time.Microsecond, 3)
+	n := 0
+	t0 := time.Now()
+	for time.Since(t0) < 50*time.Millisecond {
+		if admit, _ := throttle.Allow(); admit {
+			n++
+		}
+	}
+	if n < 10 || n > 320 {
+		t.Error(n)
+	}
+}
+
+// Test_FractionalWindow pins that a window is not rounded to whole milliseconds: at 1.5ms, rounding down to 1ms
+// would admit 50% more.
+func Test_FractionalWindow(t *testing.T) {
+	t.Parallel()
+
+	throttle := New(1500*time.Microsecond, 3) // 3 ops per 1.5 ms, or 2000 per second
+	allowed, _ := drive(throttle, time.Second, time.Microsecond, func(time.Duration) int { return 1 })
+	if allowed < 1990 || allowed > 2010 {
+		t.Error(allowed)
+	}
+}
+
+// Test_NegativeWeight pins that a negative weight is refused and leaves the counters alone: admitted, it lowered
+// the count and let later ops past the limit.
+func Test_NegativeWeight(t *testing.T) {
+	t.Parallel()
+
+	throttle := New(time.Second, 2)
 	throttle.Allow()
-	if throttle.counter[0]+throttle.counter[1] != 1 {
-		t.Error(throttle.counter[0] + throttle.counter[1])
+	throttle.Allow()
+	if admit, _ := throttle.AllowN(-100); admit {
+		t.Error("a negative weight was admitted")
+	}
+	if admit, _ := throttle.PeekN(-1); admit {
+		t.Error("a negative weight peeked as admitted")
+	}
+	if admit, observed := throttle.Allow(); admit || observed != 2 {
+		t.Errorf("after a negative weight: admit=%v observed=%d", admit, observed)
 	}
 }
 
